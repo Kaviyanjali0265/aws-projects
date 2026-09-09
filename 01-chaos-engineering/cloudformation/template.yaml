@@ -1,0 +1,241 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Project 1 - Chaos Engineering Web App.
+  Creates an ALB, Auto Scaling Group (2 EC2 instances), and a Lambda
+  that randomly terminates one instance to prove ASG auto-recovery.
+
+# Parameters - fill VpcId and SubnetIds before deploying
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Your default VPC ID (find it in VPC console)
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least 2 public subnets in different AZs
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: Free-tier eligible instance type
+
+Resources:
+
+  # Security group for the ALB - accepts HTTP from internet
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP traffic to ALB from internet
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: chaos-alb-sg
+
+  # Security group for EC2 - only accepts traffic from ALB, not from internet directly
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP only from ALB (not from internet directly)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: chaos-ec2-sg
+
+  # Application Load Balancer - internet-facing, distributes traffic across EC2 instances
+  AppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: chaos-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  # Target group - ALB checks /health every 10s and removes unhealthy instances from rotation
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: chaos-targets
+      Protocol: HTTP
+      Port: 80
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetType: instance
+
+  # Listener - routes port 80 traffic to the target group
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AppLoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # Launch template - blueprint for every new EC2 the ASG creates (AMI, type, startup script)
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: chaos-launch-template
+      LaunchTemplateData:
+        ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: chaos-instance
+              - Key: Project
+                Value: chaos-engineering
+        UserData:
+          Fn::Base64: |
+            #!/bin/bash
+            cat > /opt/app.py << 'PYEOF'
+            import http.server
+            import urllib.request
+            from datetime import datetime
+
+            try:
+                r = urllib.request.Request('http://169.254.169.254/latest/api/token', headers={'X-aws-ec2-metadata-token-ttl-seconds': '21600'}, method='PUT')
+                t = urllib.request.urlopen(r, timeout=2).read().decode()
+                r2 = urllib.request.Request('http://169.254.169.254/latest/meta-data/instance-id', headers={'X-aws-ec2-metadata-token': t})
+                INSTANCE_ID = urllib.request.urlopen(r2, timeout=2).read().decode()
+            except Exception:
+                INSTANCE_ID = 'unknown'
+
+            class AppHandler(http.server.BaseHTTPRequestHandler):
+                def do_GET(self):
+                    if self.path == '/health':
+                        self.send_response(200)
+                        self.end_headers()
+                        self.wfile.write(b'OK')
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    html = '<html><body style="font-family:Arial;text-align:center;padding:60px;background:#f5f5f5"><h1 style="color:#FF9900">Chaos Engineering Demo</h1><h2>Instance: ' + INSTANCE_ID + '</h2><p>' + datetime.now().strftime('%H:%M:%S') + '</p><p>Refresh - if this instance gets killed, ASG recovers it!</p></body></html>'
+                    self.wfile.write(html.encode())
+                def log_message(self, *a):
+                    pass
+
+            http.server.HTTPServer(('0.0.0.0', 80), AppHandler).serve_forever()
+            PYEOF
+            nohup python3 /opt/app.py > /var/log/app.log 2>&1 &
+
+  # ASG - keeps exactly 2 instances running, auto-replaces terminated ones
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: ALBListener
+    Properties:
+      AutoScalingGroupName: chaos-asg
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: '2'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      VPCZoneIdentifier: !Ref SubnetIds
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 90
+      Tags:
+        - Key: Name
+          Value: chaos-asg
+          PropagateAtLaunch: false
+
+  # IAM role for Lambda - allows terminate EC2 and describe ASG
+  LambdaChaosRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-chaos-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: chaos-ec2-terminate
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:TerminateInstances
+                  - autoscaling:DescribeAutoScalingGroups
+                Resource: '*'
+
+  # Lambda chaos terminator - picks a random InService instance and terminates it
+  ChaosLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: chaos-terminator
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaChaosRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          ASG_NAME: chaos-asg
+      Code:
+        ZipFile: |
+          import boto3
+          import random
+          import os
+
+          def handler(event, context):
+              asg_name = os.environ['ASG_NAME']
+              asg_client = boto3.client('autoscaling')
+              ec2_client = boto3.client('ec2')
+
+              response = asg_client.describe_auto_scaling_groups(
+                  AutoScalingGroupNames=[asg_name]
+              )
+              instances = response['AutoScalingGroups'][0]['Instances']
+              running = [i['InstanceId'] for i in instances if i['LifecycleState'] == 'InService']
+
+              if len(running) < 2:
+                  return {'message': 'Only 1 instance running - skipping chaos to maintain availability'}
+
+              victim = random.choice(running)
+              ec2_client.terminate_instances(InstanceIds=[victim])
+
+              return {
+                  'message': f'Terminated: {victim}',
+                  'remaining': [i for i in running if i != victim],
+                  'asg_will_recover': True
+              }
+
+Outputs:
+  LoadBalancerURL:
+    Description: Open this URL in browser to see the app
+    Value: !Sub 'http://${AppLoadBalancer.DNSName}'
+
+  ChaosLambdaName:
+    Description: Run this Lambda to trigger chaos
+    Value: !Ref ChaosLambda
+
+  AutoScalingGroupName:
+    Description: ASG name - monitor this in EC2 console
+    Value: !Ref AutoScalingGroup
