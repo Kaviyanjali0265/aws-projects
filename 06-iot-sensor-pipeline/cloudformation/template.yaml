@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Project 6 - Event-Driven IoT Sensor Pipeline.
+  API Gateway receives sensor readings, Lambda pushes to SQS, consumer Lambda
+  stores to DynamoDB and sends SNS alert if temperature exceeds threshold.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: Email address to receive high temperature alerts
+
+Resources:
+
+  # DLQ - receives messages after 3 failed processing attempts
+  SensorDataDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sensor-data-dlq
+      MessageRetentionPeriod: 1209600
+
+  # Main queue - receives sensor readings from producer Lambda
+  SensorDataQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sensor-data-queue
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt SensorDataDLQ.Arn
+        maxReceiveCount: 3
+
+  # DynamoDB table - stores all sensor readings
+  SensorReadingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: sensor-readings
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: sensor_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sensor_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+
+  # SNS topic for high temperature alerts
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: sensor-alerts
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  # IAM role for producer Lambda - only needs SQS send permission
+  ProducerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iot-producer-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: sqs-send
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt SensorDataQueue.Arn
+
+  # IAM role for consumer Lambda - needs SQS read, DynamoDB write, SNS publish
+  ConsumerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iot-consumer-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: consumer-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt SensorDataQueue.Arn
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt SensorReadingsTable.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertTopic
+
+  # Producer Lambda - validates sensor data and pushes to SQS
+  ProducerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: iot-producer
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt ProducerRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref SensorDataQueue
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import uuid
+          from datetime import datetime, timezone
+
+          sqs = boto3.client('sqs')
+          QUEUE_URL = os.environ['QUEUE_URL']
+          REQUIRED_FIELDS = ['sensor_id', 'temperature']
+
+          def lambda_handler(event, context):
+              try:
+                  body = json.loads(event.get('body', '{}'))
+              except (json.JSONDecodeError, TypeError):
+                  return {'statusCode': 400, 'body': json.dumps({'error': 'Invalid JSON'})}
+              for field in REQUIRED_FIELDS:
+                  if field not in body:
+                      return {'statusCode': 400, 'body': json.dumps({'error': f'Missing field: {field}'})}
+              message = {
+                  'sensor_id': body['sensor_id'],
+                  'temperature': float(body['temperature']),
+                  'humidity': body.get('humidity'),
+                  'timestamp': datetime.now(timezone.utc).isoformat(),
+                  'message_id': str(uuid.uuid4())
+              }
+              sqs.send_message(QueueUrl=QUEUE_URL, MessageBody=json.dumps(message))
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({'status': 'queued', 'message_id': message['message_id']})
+              }
+
+  # Consumer Lambda - reads SQS, stores to DynamoDB, alerts if temp too high
+  ConsumerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: iot-consumer
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt ConsumerRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SensorReadingsTable
+          SNS_TOPIC_ARN: !Ref AlertTopic
+          TEMP_THRESHOLD: '35'
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+
+          dynamodb = boto3.resource('dynamodb')
+          sns = boto3.client('sns')
+          TABLE_NAME = os.environ['TABLE_NAME']
+          SNS_TOPIC_ARN = os.environ['SNS_TOPIC_ARN']
+          TEMP_THRESHOLD = float(os.environ.get('TEMP_THRESHOLD', '35'))
+          table = dynamodb.Table(TABLE_NAME)
+
+          def lambda_handler(event, context):
+              for record in event['Records']:
+                  message = json.loads(record['body'])
+                  table.put_item(Item={
+                      'sensor_id': message['sensor_id'],
+                      'timestamp': message['timestamp'],
+                      'temperature': str(message['temperature']),
+                      'humidity': str(message.get('humidity', '')),
+                      'message_id': message['message_id']
+                  })
+                  if message['temperature'] > TEMP_THRESHOLD:
+                      sns.publish(
+                          TopicArn=SNS_TOPIC_ARN,
+                          Subject=f"[IoT Alert] High Temperature from {message['sensor_id']}",
+                          Message=(
+                              f"High temperature detected!\n\n"
+                              f"Sensor:      {message['sensor_id']}\n"
+                              f"Temperature: {message['temperature']}C\n"
+                              f"Threshold:   {TEMP_THRESHOLD}C\n"
+                              f"Time:        {message['timestamp']}"
+                          )
+                      )
+
+  # SQS event source mapping - consumer Lambda triggered when messages arrive
+  SQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SensorDataQueue.Arn
+      FunctionName: !GetAtt ConsumerFunction.Arn
+      BatchSize: 1
+      Enabled: true
+
+  # API Gateway HTTP API
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: iot-sensor-api
+      ProtocolType: HTTP
+
+  # Integration - connects API Gateway route to producer Lambda
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProducerFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  # Route - POST /sensor-data
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /sensor-data'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  # Stage - auto-deploy on every change
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  # Allow API Gateway to invoke producer Lambda
+  ApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProducerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*/sensor-data'
+
+  # CloudWatch alarm - fires when DLQ has messages (consumer is failing)
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: iot-dlq-messages
+      AlarmDescription: Messages in DLQ - consumer Lambda is failing to process
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt SensorDataDLQ.QueueName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+Outputs:
+  ApiEndpoint:
+    Description: POST sensor readings to this URL
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/sensor-data'
+
+  SensorTable:
+    Description: DynamoDB table storing sensor readings
+    Value: !Ref SensorReadingsTable
+
+  DLQUrl:
+    Description: Dead letter queue URL for failed messages
+    Value: !Ref SensorDataDLQ
