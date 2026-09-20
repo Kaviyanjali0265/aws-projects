@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Project 3 - S3 + CloudFront Portfolio.
+  Static HTML site hosted on private S3, served via CloudFront with HTTPS.
+  OAC keeps S3 bucket private - only CloudFront can access it.
+
+Resources:
+
+  # S3 bucket - private, no public access
+  PortfolioBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'kaviya-portfolio-${AWS::AccountId}'
+      Tags:
+        - Key: Name
+          Value: kaviya-portfolio
+
+  # OAC - allows CloudFront to access private S3 bucket
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: portfolio-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront distribution - serves S3 content globally with HTTPS
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt PortfolioBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods:
+            - GET
+            - HEAD
+        PriceClass: PriceClass_100
+        Tags:
+          - Key: Name
+            Value: kaviya-portfolio-cf
+
+  # Bucket policy - only CloudFront can read from S3
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PortfolioBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${PortfolioBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+Outputs:
+  CloudFrontURL:
+    Description: Open this URL in browser to see your portfolio
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+
+  BucketName:
+    Description: Upload index.html to this bucket
+    Value: !Ref PortfolioBucket

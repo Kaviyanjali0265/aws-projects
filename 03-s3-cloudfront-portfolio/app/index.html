@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaviyanjali - AWS Projects</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #0f1117;
+      color: #e0e0e0;
+      line-height: 1.6;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1a1f2e 0%, #232f3e 100%);
+      border-bottom: 2px solid #FF9900;
+      padding: 50px 20px;
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 2.4rem;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    header p {
+      color: #FF9900;
+      font-size: 1.1rem;
+      margin-bottom: 16px;
+    }
+
+    .badges {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .badge {
+      background: #FF9900;
+      color: #0f1117;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .badge.blue { background: #1a73e8; color: white; }
+    .badge.green { background: #2ecc71; color: #0f1117; }
+
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    section { margin-bottom: 50px; }
+
+    h2 {
+      font-size: 1.4rem;
+      color: #FF9900;
+      margin-bottom: 20px;
+      border-left: 4px solid #FF9900;
+      padding-left: 12px;
+    }
+
+    .project-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .project-card {
+      background: #1a1f2e;
+      border: 1px solid #2a2f3e;
+      border-radius: 10px;
+      padding: 24px;
+      transition: border-color 0.2s;
+    }
+
+    .project-card:hover { border-color: #FF9900; }
+
+    .project-card h3 {
+      color: #fff;
+      margin-bottom: 8px;
+      font-size: 1rem;
+    }
+
+    .project-card p {
+      color: #888;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .tag {
+      background: #232f3e;
+      color: #FF9900;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+
+    .project-card a {
+      color: #1a73e8;
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    .project-card a:hover { text-decoration: underline; }
+
+    .skills-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+    }
+
+    .skill {
+      background: #1a1f2e;
+      border: 1px solid #2a2f3e;
+      border-radius: 8px;
+      padding: 14px;
+      text-align: center;
+      font-size: 13px;
+      color: #ccc;
+    }
+
+    .skill span {
+      display: block;
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
+
+    .about {
+      background: #1a1f2e;
+      border: 1px solid #2a2f3e;
+      border-radius: 10px;
+      padding: 24px;
+      color: #aaa;
+      font-size: 14px;
+    }
+
+    .about strong { color: #fff; }
+
+    footer {
+      text-align: center;
+      padding: 30px;
+      color: #444;
+      font-size: 12px;
+      border-top: 1px solid #1a1f2e;
+    }
+
+    footer span { color: #FF9900; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Kaviyanjali</h1>
+  <p>AWS Solutions Architect Associate - In Progress</p>
+  <div class="badges">
+    <span class="badge">SAA-C03</span>
+    <span class="badge blue">Cloud Engineer</span>
+    <span class="badge green">Free Tier Only</span>
+  </div>
+</header>
+
+<main>
+
+  <section>
+    <h2>About</h2>
+    <div class="about">
+      <strong>Software professional</strong> building hands-on AWS projects while studying for the SAA-C03 certification.
+      Each project demonstrates a real AWS architecture pattern — built manually in the console, then automated with CloudFormation.
+      All projects use free tier only.
+    </div>
+  </section>
+
+  <section>
+    <h2>Projects</h2>
+    <div class="project-grid">
+
+      <div class="project-card">
+        <h3>01 - Chaos Engineering</h3>
+        <p>Fault-tolerant web app. Lambda randomly terminates EC2 instances. ASG auto-recovers in under 90 seconds.</p>
+        <div class="tags">
+          <span class="tag">EC2</span>
+          <span class="tag">ALB</span>
+          <span class="tag">ASG</span>
+          <span class="tag">Lambda</span>
+          <span class="tag">CloudFormation</span>
+        </div>
+        <a href="https://github.com/Kaviyanjali0265/aws-projects/tree/main/01-chaos-engineering" target="_blank">View on GitHub →</a>
+      </div>
+
+      <div class="project-card">
+        <h3>02 - RDS vs DynamoDB</h3>
+        <p>Same app writing to both RDS MySQL and DynamoDB. Shows SQL schema enforcement vs NoSQL flexibility side by side.</p>
+        <div class="tags">
+          <span class="tag">RDS</span>
+          <span class="tag">DynamoDB</span>
+          <span class="tag">EC2</span>
+          <span class="tag">IAM</span>
+          <span class="tag">VPC</span>
+        </div>
+        <a href="https://github.com/Kaviyanjali0265/aws-projects/tree/main/02-rds-vs-dynamodb" target="_blank">View on GitHub →</a>
+      </div>
+
+      <div class="project-card">
+        <h3>03 - S3 + CloudFront Portfolio</h3>
+        <p>This page. Static site hosted on S3, served via CloudFront globally with HTTPS. OAC keeps S3 bucket private.</p>
+        <div class="tags">
+          <span class="tag">S3</span>
+          <span class="tag">CloudFront</span>
+          <span class="tag">ACM</span>
+          <span class="tag">OAC</span>
+        </div>
+        <a href="https://github.com/Kaviyanjali0265/aws-projects/tree/main/03-s3-cloudfront-portfolio" target="_blank">View on GitHub →</a>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>AWS Skills</h2>
+    <div class="skills-grid">
+      <div class="skill"><span>🖥️</span>EC2</div>
+      <div class="skill"><span>⚖️</span>ALB</div>
+      <div class="skill"><span>📈</span>Auto Scaling</div>
+      <div class="skill"><span>λ</span>Lambda</div>
+      <div class="skill"><span>🗄️</span>RDS MySQL</div>
+      <div class="skill"><span>⚡</span>DynamoDB</div>
+      <div class="skill"><span>🪣</span>S3</div>
+      <div class="skill"><span>🌍</span>CloudFront</div>
+      <div class="skill"><span>🔐</span>IAM</div>
+      <div class="skill"><span>☁️</span>CloudFormation</div>
+      <div class="skill"><span>🔒</span>Security Groups</div>
+      <div class="skill"><span>🌐</span>VPC</div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  Hosted on <span>Amazon S3 + CloudFront</span> · Built with free tier only
+</footer>
+
+</body>
+</html>
