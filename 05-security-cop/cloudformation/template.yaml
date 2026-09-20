@@ -1,0 +1,290 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Project 5 - Automated Security Cop.
+  CloudTrail logs all API calls to S3 (KMS encrypted) and CloudWatch Logs.
+  Metric filters detect suspicious events. CloudWatch alarms trigger Lambda.
+  Lambda formats the alert and emails you via SNS.
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive security alerts
+
+Resources:
+
+  # S3 bucket for CloudTrail logs - encrypted with AWS managed KMS key
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'security-cop-trail-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # Bucket policy - CloudTrail needs permission to write logs here
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  # CloudWatch Log Group - CloudTrail streams logs here for metric filters
+  CloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/cloudtrail/security-cop
+      RetentionInDays: 30
+
+  # IAM role allowing CloudTrail to write to CloudWatch Logs
+  CloudTrailCWRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: security-cop-cloudtrail-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cloudtrail-logs-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt CloudTrailLogGroup.Arn
+
+  # CloudTrail trail - logs management events, sends to S3 and CloudWatch
+  Trail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: security-cop-trail
+      S3BucketName: !Ref CloudTrailBucket
+      CloudWatchLogsLogGroupArn: !GetAtt CloudTrailLogGroup.Arn
+      CloudWatchLogsRoleArn: !GetAtt CloudTrailCWRole.Arn
+      IsLogging: true
+      IncludeGlobalServiceEvents: true
+      IsMultiRegionTrail: false
+
+  # SNS topic - CloudWatch alarms publish here, Lambda subscribes
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: security-cop-alarms
+
+  # SNS topic - Lambda publishes formatted alerts here, you subscribe via email
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: security-cop-notifications
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+  # IAM role for Lambda
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: security-cop-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: lambda-sns-publish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref NotificationTopic
+
+  # Lambda function - receives alarm from SNS, formats it, sends readable email
+  SecurityCopFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: security-cop
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref NotificationTopic
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+
+          sns = boto3.client('sns')
+          TOPIC_ARN = os.environ['SNS_TOPIC_ARN']
+
+          def lambda_handler(event, context):
+              for record in event['Records']:
+                  message = json.loads(record['Sns']['Message'])
+                  alarm_name = message.get('AlarmName', 'Unknown')
+                  alarm_description = message.get('AlarmDescription', '')
+                  state = message.get('NewStateValue', '')
+                  reason = message.get('NewStateReason', '')
+                  timestamp = message.get('StateChangeTime', '')
+                  formatted = (
+                      f"SECURITY ALERT\n\n"
+                      f"Alarm:       {alarm_name}\n"
+                      f"Description: {alarm_description}\n"
+                      f"State:       {state}\n"
+                      f"Time:        {timestamp}\n\n"
+                      f"Details: {reason}\n\n"
+                      f"Check CloudTrail for the full event details."
+                  )
+                  sns.publish(
+                      TopicArn=TOPIC_ARN,
+                      Subject=f"[AWS Security Alert] {alarm_name}",
+                      Message=formatted
+                  )
+
+  # Allow SNS alarm topic to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SecurityCopFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref AlarmTopic
+
+  # Subscribe Lambda to the alarm topic
+  LambdaSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: lambda
+      Endpoint: !GetAtt SecurityCopFunction.Arn
+
+  # Metric Filter 1 - Root account used for any API call
+  RootUsageFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CloudTrailLogGroup
+      FilterPattern: '{ $.userIdentity.type = "Root" && $.userIdentity.invokedBy NOT EXISTS && $.eventType != "AwsServiceEvent" }'
+      MetricTransformations:
+        - MetricName: RootAccountUsage
+          MetricNamespace: SecurityCop
+          MetricValue: '1'
+          DefaultValue: 0
+
+  RootUsageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: security-cop-root-usage
+      AlarmDescription: Root account was used to make an API call
+      MetricName: RootAccountUsage
+      Namespace: SecurityCop
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # Metric Filter 2 - Unauthorized API calls (AccessDenied errors)
+  UnauthorizedFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CloudTrailLogGroup
+      FilterPattern: '{ ($.errorCode = "AccessDenied") || ($.errorCode = "UnauthorizedAccess") }'
+      MetricTransformations:
+        - MetricName: UnauthorizedAPICalls
+          MetricNamespace: SecurityCop
+          MetricValue: '1'
+          DefaultValue: 0
+
+  UnauthorizedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: security-cop-unauthorized-calls
+      AlarmDescription: Unauthorized API calls detected in the account
+      MetricName: UnauthorizedAPICalls
+      Namespace: SecurityCop
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # Metric Filter 3 - Security group rules changed
+  SGChangeFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CloudTrailLogGroup
+      FilterPattern: '{ ($.eventName = AuthorizeSecurityGroupIngress) || ($.eventName = AuthorizeSecurityGroupEgress) || ($.eventName = RevokeSecurityGroupIngress) || ($.eventName = RevokeSecurityGroupEgress) }'
+      MetricTransformations:
+        - MetricName: SecurityGroupChanges
+          MetricNamespace: SecurityCop
+          MetricValue: '1'
+          DefaultValue: 0
+
+  SGChangeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: security-cop-sg-changes
+      AlarmDescription: Security group rules were modified
+      MetricName: SecurityGroupChanges
+      Namespace: SecurityCop
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+Outputs:
+  CloudTrailBucket:
+    Description: S3 bucket storing CloudTrail logs (KMS encrypted)
+    Value: !Ref CloudTrailBucket
+
+  NotificationTopic:
+    Description: SNS topic that sends email alerts
+    Value: !Ref NotificationTopic
+
+  LambdaFunction:
+    Description: Lambda function that formats and sends alerts
+    Value: !Ref SecurityCopFunction
