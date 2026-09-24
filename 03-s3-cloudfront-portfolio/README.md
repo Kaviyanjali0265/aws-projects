@@ -1,8 +1,8 @@
-# Project 3 — Static Portfolio with S3 + CloudFront
+# Project 3 - Static Portfolio with S3 + CloudFront
 
 ## What This Project Does
 
-Hosts a static portfolio website on Amazon S3 and serves it globally through CloudFront. S3 is kept fully private — only CloudFront can read from it using OAC (Origin Access Control). Users always get HTTPS even though S3 only stores plain files.
+Hosts a static portfolio website on Amazon S3 and serves it globally through CloudFront. S3 is kept fully private - only CloudFront can read from it using OAC (Origin Access Control). Users always get HTTPS even though S3 only stores plain files.
 
 ---
 
@@ -15,7 +15,7 @@ Internet
     v
 CloudFront Distribution
     |   215+ edge locations worldwide
-    |   Price Class 100 (North America + Europe — cheapest)
+    |   Price Class 100 (North America + Europe - cheapest)
     |   Default root object: index.html
     |   Viewer protocol: HTTP redirected to HTTPS
     |   Free HTTPS on *.cloudfront.net (no custom domain needed)
@@ -46,32 +46,32 @@ OAC (Origin Access Control)
 
 | Service | Purpose |
 |---------|---------|
-| S3 | Stores static files (HTML, CSS, JS) — kept private |
-| CloudFront | CDN — serves content from edge locations globally, handles HTTPS |
+| S3 | Stores static files (HTML, CSS, JS) - kept private |
+| CloudFront | CDN - serves content from edge locations globally, handles HTTPS |
 | OAC | Lets CloudFront authenticate to S3 without making S3 public |
-| ACM | Free SSL certificate (must be in us-east-1 for CloudFront) — optional for custom domain |
+| ACM | Free SSL certificate (must be in us-east-1 for CloudFront) - optional for custom domain |
 
 ---
 
 
 ## How It Was Built
 
-### Step 1 — S3 Bucket
+### Step 1 - S3 Bucket
 
 - Created bucket `kaviyanjali-portfolio` in ap-south-1
 - Block Public Access: ON (bucket stays private)
 - Uploaded `app/index.html`
 
-### Step 2 — CloudFront Distribution
+### Step 2 - CloudFront Distribution
 
 - Origin: `kaviyanjali-portfolio` S3 bucket
 - Origin access: OAC (auto-created by console)
 - Default root object: `index.html`
 - Viewer protocol policy: Redirect HTTP to HTTPS
-- Price class: 100 (cheapest — North America + Europe edge locations)
+- Price class: 100 (cheapest - North America + Europe edge locations)
 - CloudFront auto-generates the bucket policy → paste into S3
 
-### Step 3 — S3 Bucket Policy
+### Step 3 - S3 Bucket Policy
 
 Applied the policy CloudFront generated:
 
@@ -91,7 +91,7 @@ Applied the policy CloudFront generated:
 
 Only this specific CloudFront distribution can read from S3. All other requests return 403.
 
-### Step 4 — Wait for Deployment
+### Step 4 - Wait for Deployment
 
 CloudFront takes 5–10 minutes to deploy to all edge locations. Status changes from "Deploying" to "Enabled".
 
@@ -135,7 +135,7 @@ Only CloudFront signs requests with OAC → only CloudFront gets through
 ```
 03-s3-cloudfront-portfolio/
 ├── app/
-│   └── index.html              # Portfolio page — dark theme, project cards, skills grid
+│   └── index.html              # Portfolio page - dark theme, project cards, skills grid
 ├── cloudformation/
 │   └── template.yaml           # S3 bucket, OAC, CloudFront distribution as code
 └── screenshots/
@@ -146,15 +146,15 @@ Only CloudFront signs requests with OAC → only CloudFront gets through
 
 ## Key Concepts Demonstrated
 
-**OAC vs making S3 public** — S3 stays fully private. OAC gives CloudFront a signed identity so S3 can verify "this request came from my CloudFront distribution". No public bucket needed.
+**OAC vs making S3 public** - S3 stays fully private. OAC gives CloudFront a signed identity so S3 can verify "this request came from my CloudFront distribution". No public bucket needed.
 
-**CloudFront caching** — Static files are cached at edge locations. Users in any region get fast response without every request hitting S3 in Mumbai.
+**CloudFront caching** - Static files are cached at edge locations. Users in any region get fast response without every request hitting S3 in Mumbai.
 
-**HTTPS for free** — CloudFront gives HTTPS on `*.cloudfront.net` automatically. No ACM certificate needed unless you use a custom domain.
+**HTTPS for free** - CloudFront gives HTTPS on `*.cloudfront.net` automatically. No ACM certificate needed unless you use a custom domain.
 
-**ACM must be us-east-1** — CloudFront is a global service that reads certificates only from us-east-1, even if your S3 bucket is in another region.
+**ACM must be us-east-1** - CloudFront is a global service that reads certificates only from us-east-1, even if your S3 bucket is in another region.
 
-**Price Class 100** — Limits edge locations to North America + Europe (cheapest). Price Class 200 adds more regions, All adds every location.
+**Price Class 100** - Limits edge locations to North America + Europe (cheapest). Price Class 200 adds more regions, All adds every location.
 
 ---
 
@@ -175,7 +175,7 @@ aws s3 cp app/index.html s3://kaviyanjali-portfolio/ --profile personal
 
 ---
 
-## Alternative with Route 53 (not used — costs money)
+## Alternative with Route 53 (not used - costs money)
 
 ```
 Custom domain: kaviya.com

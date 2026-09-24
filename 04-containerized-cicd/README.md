@@ -1,10 +1,10 @@
-# Project 4 — Containerized App with CI/CD (ECS + ECR + CodePipeline)
+# Project 4 - Containerized App with CI/CD (ECS + ECR + CodePipeline)
 
 ## What This Project Does
 
 Deploys a Dockerized Python web app to Amazon ECS (EC2 launch type) with an Application Load Balancer in front. A CodePipeline connects GitHub to ECS so that pushing code triggers a build and deploy automatically.
 
-The app shows which container is running, the version, and how it was deployed — useful for verifying that new deployments roll out correctly.
+The app shows which container is running, the version, and how it was deployed - useful for verifying that new deployments roll out correctly.
 
 ---
 
@@ -21,7 +21,7 @@ Application Load Balancer (cicd-alb)
     | forwards to port 80
     v
 ECS Service (containerized-app-service)
-    |   EC2 Launch Type — t3.micro
+    |   EC2 Launch Type - t3.micro
     |   Security Group: cicd-ecs-sg (allows all traffic from cicd-alb-sg only)
     |   Task Definition: containerized-app:1
     |
@@ -59,7 +59,7 @@ CodePipeline (containerized-app-pipeline)
 
 <p align="center">
   <img src="screenshots/01-app-running-ecs-browser.png" alt="App running on ECS" width="600"/><br/>
-  <em>App running in browser — container ID, version, HEALTHY</em>
+  <em>App running in browser - container ID, version, HEALTHY</em>
 </p>
 
 <p align="center">
@@ -74,7 +74,7 @@ CodePipeline (containerized-app-pipeline)
 
 <p align="center">
   <img src="screenshots/04-codepipeline-build-failed.png" alt="CodePipeline build failed" width="800"/><br/>
-  <em>CodePipeline — Source succeeded, Build failed (AWS account limit on new accounts)</em>
+  <em>CodePipeline - Source succeeded, Build failed (AWS account limit on new accounts)</em>
 </p>
 
 <p align="center">
@@ -86,11 +86,11 @@ CodePipeline (containerized-app-pipeline)
 
 ## How It Was Built
 
-### Step 1 — ECR Repository
+### Step 1 - ECR Repository
 
 Created private ECR repo named `containerized-app`.
 
-### Step 2 — Build and Push Docker Image
+### Step 2 - Build and Push Docker Image
 
 ```bash
 # login to ECR
@@ -109,31 +109,31 @@ docker push \
   <account-id>.dkr.ecr.ap-south-1.amazonaws.com/containerized-app:latest
 ```
 
-### Step 3 — ECS Cluster and Task Definition
+### Step 3 - ECS Cluster and Task Definition
 
 - Created ECS cluster `cicd-cluster` with EC2 launch type (t3.micro)
 - Created task definition `containerized-app` referencing the ECR image
 - Container port: 80, Memory: 256 MB
 
-### Step 4 — ALB and Security Groups
+### Step 4 - ALB and Security Groups
 
 - Created `cicd-alb-sg`: allows HTTP (port 80) from 0.0.0.0/0
 - Created `cicd-ecs-sg`: allows all traffic from `cicd-alb-sg` only (no direct internet access)
 - Created ALB `cicd-alb` with target group on `/health` path
 - ECS service registers tasks with the target group automatically
 
-### Step 5 — ECS Service
+### Step 5 - ECS Service
 
 - Created service `containerized-app-service` with desired count 1
 - Service pulls task definition, places container on the EC2 instance, registers with ALB
 
-### Step 6 — CodePipeline
+### Step 6 - CodePipeline
 
 - Created pipeline: GitHub (source) → CodeBuild (build) → ECS (deploy)
-- CodeBuild reads `buildspec.yml` — builds image, pushes to ECR, outputs `imagedefinitions.json`
+- CodeBuild reads `buildspec.yml` - builds image, pushes to ECR, outputs `imagedefinitions.json`
 - ECS deploy stage reads `imagedefinitions.json` to update the service with the new image
 
-> **Note:** CodeBuild failed on first run with `AccountLimitExceededException` — new AWS accounts have a concurrent build limit of 0. Manual build (Steps 2–5) was already working before the pipeline was set up, confirming the Docker → ECR → ECS flow is correct. The pipeline architecture is in place for when the limit is lifted.
+> **Note:** CodeBuild failed on first run with `AccountLimitExceededException` - new AWS accounts have a concurrent build limit of 0. Manual build (Steps 2–5) was already working before the pipeline was set up, confirming the Docker → ECR → ECS flow is correct. The pipeline architecture is in place for when the limit is lifted.
 
 ---
 
@@ -142,7 +142,9 @@ docker push \
 ```
 04-containerized-cicd/
 ├── app/
-│   └── app.py                  # Python HTTP server — shows container ID, version, health
+│   ├── app.py                  # Python HTTP server - shows container ID, version, health
+│   └── templates/
+│       └── index.html          # HTML template with {{HOSTNAME}} and {{VERSION}} placeholders
 ├── Dockerfile                  # FROM python:3.11-slim, runs app.py on port 80
 ├── buildspec.yml               # CodeBuild steps: login ECR, docker build, push, imagedefinitions.json
 ├── cloudformation/
@@ -159,15 +161,15 @@ docker push \
 
 ## Key Concepts Demonstrated
 
-**Security group chaining** — ECS instances are not open to the internet. Only the ALB's security group can reach them. Users hit the ALB, ALB hits ECS.
+**Security group chaining** - ECS instances are not open to the internet. Only the ALB's security group can reach them. Users hit the ALB, ALB hits ECS.
 
-**ECS launch types** — EC2 launch type means you manage the underlying instance (ECS agent runs on it, registers with the cluster). Fargate removes that — AWS manages the host.
+**ECS launch types** - EC2 launch type means you manage the underlying instance (ECS agent runs on it, registers with the cluster). Fargate removes that - AWS manages the host.
 
-**ECR as private registry** — docker images stay in your account. ECS pulls using the task execution role (IAM), not public credentials.
+**ECR as private registry** - docker images stay in your account. ECS pulls using the task execution role (IAM), not public credentials.
 
-**imagedefinitions.json** — the bridge between CodeBuild and ECS deploy. CodeBuild writes `[{"name":"app","imageUri":"..."}]` and CodePipeline uses it to tell ECS which image to deploy.
+**imagedefinitions.json** - the bridge between CodeBuild and ECS deploy. CodeBuild writes `[{"name":"app","imageUri":"..."}]` and CodePipeline uses it to tell ECS which image to deploy.
 
-**Health checks** — ALB pings `/health` every 15 seconds. Tasks that fail health checks are replaced. This is how zero-downtime rolling deploys work.
+**Health checks** - ALB pings `/health` every 15 seconds. Tasks that fail health checks are replaced. This is how zero-downtime rolling deploys work.
 
 ---
 

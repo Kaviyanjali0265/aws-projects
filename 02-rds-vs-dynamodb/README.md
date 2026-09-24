@@ -101,7 +101,7 @@ Shows the core tradeoff between SQL schema enforcement and DynamoDB's schemaless
    - Instance type: t3.micro
    - IAM instance profile: `rds-dynamo-ec2-role`
    - Security group: `rds-dynamo-ec2-sg`
-   - User data: paste contents of `userdata.sh` (update RDS_HOST and RDS_PASSWORD first)
+   - User data: paste the UserData block from `cloudformation/template.yaml` (update RDS_HOST and RDS_PASSWORD env vars to match your RDS endpoint)
 
 ### Step 2 - Via CloudFormation (cross-check)
 
